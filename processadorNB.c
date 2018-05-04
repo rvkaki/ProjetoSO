@@ -39,8 +39,8 @@ int readln(int input, char **buf, int *nbytes) {
 	while (c != '\n' && (n = read(input, &c, 1)) > 0) {
 		mybuf[count++] = c;
         if (count == numbytes) {
-            mybuf = realloc(mybuf, numbytes * 2);
-            numbytes = numbytes * 2;
+            mybuf = realloc(mybuf, 2 * numbytes * sizeof(char));
+            numbytes *= 2;
         }
     }
 
@@ -76,8 +76,8 @@ char **getArgs(char *buf) {
         while (j < length && buf[j] != ' ') {
             aux[k++] = buf[j++];
             if (k == auxSize) {
-                aux = realloc(aux, auxSize * 2);
-                auxSize = auxSize * 2;
+                aux = realloc(aux, 2 * auxSize * sizeof(char));
+                auxSize *= 2;
             }
         }
         aux[k] = '\0';
@@ -92,7 +92,7 @@ char **getArgs(char *buf) {
     return args;
 }
 
-void main(int argc, char *argv[]) {
+int main(int argc, char *argv[]) {
     if (argc != 2)
         printUsageExit(argv[0]);
 
@@ -111,38 +111,92 @@ void main(int argc, char *argv[]) {
         exit(1);
     }
 
-    int n, buf_size = INITIAL_BUF_SIZE;
-    char *buf = malloc(buf_size);
+    int n, bufSize = INITIAL_BUF_SIZE, curCommand = 0, numOutputs = 4, *outputs = malloc(numOutputs * sizeof(int));
+    char *buf = malloc(bufSize * sizeof(char));
 
-    while ((n = readln(notebook, &buf, &buf_size)) > 0) {
+    while ((n = readln(notebook, &buf, &bufSize)) > 0) {
         write(temp, buf, n);
 
         if (buf[0] == '$') {
             write(temp, ">>>\n", 4);
+            outputs[curCommand] = lseek(temp, 0, SEEK_CUR);
+            if (curCommand == numOutputs-1) {
+                outputs = realloc(outputs, 2 * numOutputs * sizeof(int));
+                numOutputs *= 2;
+            }
 
-            if (n >= 4 && buf[1] == '|') {
-                // Falta implementar
-            } else if (n >= 3) {
-                char **args = getArgs(buf+2);
-
-                int x = fork();
-                if (x == 0) {
-                    dup2(temp, 1);
-
-                    execvp(args[0], args);
-
-                    exit(1);
+            char *mybuf = buf+2;
+            int inputNum = -1;
+            if (buf[1] != ' ') {
+                mybuf += 1;
+                int inputOffset = 1;
+                if (buf[1] != '|') {
+                    int i = 0, sizeNum = 2;
+                    char *num = malloc(sizeNum * sizeof(char));
+                    while (buf[i+1] != '|') {
+                        num[i] = buf[i+1];
+                        i++;
+                        if (i == sizeNum) {
+                            num = realloc(num, 2 * sizeNum * sizeof(char));
+                            sizeNum *= 2;
+                        }
+                    }
+                    num[i] = '\0';
+                    mybuf += i;
+                    inputOffset = atoi(num);
                 }
+                inputNum = curCommand - inputOffset;
+            }
 
-                int status;
-                wait(&status);
-                if (WEXITSTATUS(status) == EXIT_FAILURE) {
-                    printf("Erro a executar o programa: %s\n", args[0]);
-                    exit(1);
+            int p[2] = {0, 1};
+            if (inputNum != -1)
+                pipe(p);
+
+            char **args = getArgs(mybuf);
+
+            int x = fork();
+            if (x == 0) {
+                dup2(p[0], 0);
+                dup2(temp, 1);
+                if (inputNum != -1) {
+                    close(p[0]);
+                    close(p[1]);
                 }
+                close(notebook);
+                close(temp);
+
+                execvp(args[0], args);
+
+                exit(1);
+            }
+
+            if (inputNum != -1) {
+                close(p[0]);
+                lseek(temp, outputs[inputNum], SEEK_SET);
+                while (1) {
+                    char *pos;
+                    int n = read(temp, buf, bufSize);
+                    if ((pos = strstr(buf, "<<<")) != NULL) {
+                        write(p[1], buf, pos-buf);
+                        break;
+                    } else {
+                        write(p[1], buf, n);
+                    }
+                }
+                close(p[1]);
+                lseek(temp, 0, SEEK_END);
+            }
+
+            int status;
+            wait(&status);
+            if (WEXITSTATUS(status) == EXIT_FAILURE) {
+                printf("Erro a executar o programa: %s\n", args[0]);
+                exit(1);
             }
 
             write(temp, "<<<\n", 4);
+
+            curCommand++;
         }
     }
 
@@ -151,13 +205,18 @@ void main(int argc, char *argv[]) {
         exit(1);
     }
 
+    ftruncate(notebook, 0);
+    lseek(notebook, 0, SEEK_SET);
+    lseek(temp, 0, SEEK_SET);
+    while ((n = readln(temp, &buf, &bufSize)) > 0)
+        write(notebook, buf, n);
+    
     close(notebook);
+    close(temp);
 
-    /*
-    int res = remove(TEMP_FILE);
+    int res = 0;//remove(TEMP_FILE);
     if (res == -1) {
         printf("Não foi possível eliminar o ficheiro temporário\n");
         exit(1);
     }
-    */
 }

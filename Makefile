@@ -1,6 +1,8 @@
+CC=gcc
+CFLAGS=-Wall -Wextra
+
 processadorNB: processadorNB.o
 	gcc -Wall -Wextra -o processadorNB processadorNB.o
-	rm *.o
 
 clean:
-	rm -r -f *.txt processadorNB
+	rm -r -f *.txt *.o processadorNB
