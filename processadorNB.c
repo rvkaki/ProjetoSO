@@ -115,6 +115,15 @@ int main(int argc, char *argv[]) {
     char *buf = malloc(bufSize * sizeof(char));
 
     while ((n = readln(notebook, &buf, &bufSize)) > 0) {
+        if (n == 4 && strncmp(buf, ">>>\n", 4) == 0) {
+            while (1) {
+                readln(notebook, &buf, &bufSize);
+                if (n == 4 && strncmp(buf, "<<<\n", 4) == 0)
+                    break;
+            }
+
+            continue;
+        }
         write(temp, buf, n);
 
         if (buf[0] == '$') {
@@ -214,7 +223,7 @@ int main(int argc, char *argv[]) {
     close(notebook);
     close(temp);
 
-    int res = 0;//remove(TEMP_FILE);
+    int res = remove(TEMP_FILE);
     if (res == -1) {
         printf("Não foi possível eliminar o ficheiro temporário\n");
         exit(1);
