@@ -4,14 +4,41 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <signal.h>
 
 #define INITIAL_BUF_SIZE    1
 #define TEMP_FILE           "temp.txt"
+
+int temp = -1;
+int criticalSection = 0;
 
 // Função que imprime como utilizar o programa e faz exit
 void printUsageExit(char *name) {
     printf("Uso: %s exemplo.nb\n", name);
     exit(1);
+}
+
+// Função que remove o ficheiro temporário e faz exit
+void removeTempExit() {
+    if (temp != -1) {
+        close(temp);
+
+        int res = remove(TEMP_FILE);
+        if (res == -1) {
+            printf("Não foi possível eliminar o ficheiro temporário\n");
+            exit(1);
+        }
+    }
+    exit(0);
+}
+
+// Handler para lidar com o Ctrl+C
+void sigquitHandler(int x) {
+    if (criticalSection)
+        return;
+
+    printf("\nSinal %d (Ctrl+C) recebido. A parar a execução\n", x);
+    removeTempExit();
 }
 
 // Função que determina se um ficheiro é do tipo .nb
@@ -93,10 +120,9 @@ char **getArgs(char *buf) {
 }
 
 int main(int argc, char *argv[]) {
-    if (argc != 2)
-        printUsageExit(argv[0]);
+    signal(SIGINT, sigquitHandler);
 
-    if (!isNBFile(argv[1]))
+    if (argc != 2 || !isNBFile(argv[1]))
         printUsageExit(argv[0]);
 
     int notebook = open(argv[1], O_RDWR);
@@ -105,7 +131,7 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    int temp = open(TEMP_FILE, O_RDWR | O_CREAT | O_TRUNC, 0600);
+    temp = open(TEMP_FILE, O_RDWR | O_CREAT | O_TRUNC, 0600);
     if (temp == -1) {
         printf("Não foi possível criar o ficheiro temporário\n");
         exit(1);
@@ -200,7 +226,7 @@ int main(int argc, char *argv[]) {
             wait(&status);
             if (WEXITSTATUS(status) == EXIT_FAILURE) {
                 printf("Erro a executar o programa: %s\n", args[0]);
-                exit(1);
+                removeTempExit();
             }
 
             write(temp, "<<<\n", 4);
@@ -211,8 +237,10 @@ int main(int argc, char *argv[]) {
 
     if (n == -1) {
         printf("Erro a ler do notebook\n");
-        exit(1);
+        removeTempExit();
     }
+
+    criticalSection = 1;
 
     ftruncate(notebook, 0);
     lseek(notebook, 0, SEEK_SET);
@@ -221,11 +249,6 @@ int main(int argc, char *argv[]) {
         write(notebook, buf, n);
     
     close(notebook);
-    close(temp);
-
-    int res = remove(TEMP_FILE);
-    if (res == -1) {
-        printf("Não foi possível eliminar o ficheiro temporário\n");
-        exit(1);
-    }
+    
+    removeTempExit();
 }
