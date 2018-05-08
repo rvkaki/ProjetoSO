@@ -19,7 +19,7 @@ void printUsageExit(char *name) {
 }
 
 // Função que remove o ficheiro temporário e faz exit
-void removeTempExit() {
+void removeTempExit(int exitStatus) {
     if (temp != -1) {
         close(temp);
 
@@ -29,7 +29,7 @@ void removeTempExit() {
             exit(1);
         }
     }
-    exit(0);
+    exit(exitStatus);
 }
 
 // Handler para lidar com o Ctrl+C
@@ -38,7 +38,7 @@ void sigquitHandler(int x) {
         return;
 
     printf("\nSinal %d (Ctrl+C) recebido. A parar a execução\n", x);
-    removeTempExit();
+    removeTempExit(0);
 }
 
 // Função que determina se um ficheiro é do tipo .nb
@@ -226,7 +226,7 @@ int main(int argc, char *argv[]) {
             wait(&status);
             if (WEXITSTATUS(status) == EXIT_FAILURE) {
                 printf("Erro a executar o programa: %s\n", args[0]);
-                removeTempExit();
+                removeTempExit(1);
             }
 
             write(temp, "<<<\n", 4);
@@ -237,7 +237,7 @@ int main(int argc, char *argv[]) {
 
     if (n == -1) {
         printf("Erro a ler do notebook\n");
-        removeTempExit();
+        removeTempExit(1);
     }
 
     criticalSection = 1;
@@ -250,5 +250,5 @@ int main(int argc, char *argv[]) {
     
     close(notebook);
     
-    removeTempExit();
+    removeTempExit(0);
 }
