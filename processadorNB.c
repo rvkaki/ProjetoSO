@@ -6,8 +6,9 @@
 #include <sys/wait.h>
 #include <signal.h>
 
-#define INITIAL_BUF_SIZE    1
-#define TEMP_FILE           "temp.txt"
+#define INITIAL_BUF_SIZE        64
+#define INITIAL_NUM_COMANDS     8
+#define TEMP_FILE               "temp.txt"
 
 int temp = -1;
 int criticalSection = 0;
@@ -122,25 +123,31 @@ char **getArgs(char *buf) {
 int main(int argc, char *argv[]) {
     signal(SIGINT, sigquitHandler);
 
+    // Verificar se os argumentos estão corretos. Se não estiverem, imprimir
+    // o modo de utilização e sair
     if (argc != 2 || !isNBFile(argv[1]))
         printUsageExit(argv[0]);
 
+    // Abrir o notebook
     int notebook = open(argv[1], O_RDWR);
     if (notebook == -1) {
         printf("Não foi possível abrir o notebook\n");
         exit(1);
     }
 
+    // Abrir o ficheiro temporário
     temp = open(TEMP_FILE, O_RDWR | O_CREAT | O_TRUNC, 0600);
     if (temp == -1) {
         printf("Não foi possível criar o ficheiro temporário\n");
         exit(1);
     }
 
-    int n, bufSize = INITIAL_BUF_SIZE, curCommand = 0, numOutputs = 4, *outputs = malloc(numOutputs * sizeof(int));
+    int n, bufSize = INITIAL_BUF_SIZE, curCommand = 0, numOutputs = INITIAL_NUM_COMANDS, *outputs = malloc(numOutputs * sizeof(int));
     char *buf = malloc(bufSize * sizeof(char));
 
     while ((n = readln(notebook, &buf, &bufSize)) > 0) {
+        // Se o texto a seguir for o output do comando de um processamento
+        // anterior, ignorá-lo
         if (n == 4 && strncmp(buf, ">>>\n", 4) == 0) {
             while (1) {
                 readln(notebook, &buf, &bufSize);
@@ -150,16 +157,25 @@ int main(int argc, char *argv[]) {
 
             continue;
         }
+
+        // Imprimir a linha para o ficheiro temporário, quer seja uma linha de
+        // texto ou um comando
         write(temp, buf, n);
 
+        // Se a linha for um comando, interpretá-lo e executá-lo
         if (buf[0] == '$') {
             write(temp, ">>>\n", 4);
+
+            // Guardar a posição do ficheiro temporário onde começa o output
+            // do programa a executar
             outputs[curCommand] = lseek(temp, 0, SEEK_CUR);
             if (curCommand == numOutputs-1) {
                 outputs = realloc(outputs, 2 * numOutputs * sizeof(int));
                 numOutputs *= 2;
             }
 
+            // Verificar se o comando a executar necessita de receber como input
+            // o output de um programa anterior e se sim coloca qual em inputNum
             char *mybuf = buf+2;
             int inputNum = -1;
             if (buf[1] != ' ') {
@@ -183,12 +199,16 @@ int main(int argc, char *argv[]) {
                 inputNum = curCommand - inputOffset;
             }
 
+            // Criar um pipe para enviar ao comando a executar o output de
+            // um programa anterior se ele quiser
             int p[2] = {0, 1};
             if (inputNum != -1)
                 pipe(p);
 
+            // Obter o array de argumentos para passar ao comando
             char **args = getArgs(mybuf);
 
+            // Criar um filho para executar o comando
             int x = fork();
             if (x == 0) {
                 dup2(p[0], 0);
@@ -205,6 +225,8 @@ int main(int argc, char *argv[]) {
                 exit(1);
             }
 
+            // Se o comando a executar quiser como input o output de outro
+            // comando, enviar-lhe o output
             if (inputNum != -1) {
                 close(p[0]);
                 lseek(temp, outputs[inputNum], SEEK_SET);
@@ -222,24 +244,34 @@ int main(int argc, char *argv[]) {
                 lseek(temp, 0, SEEK_END);
             }
 
+            // Esperar que o comando a executar termine e verificar se o
+            // fez com sucesso. Se isso não acontecer, parar o processamento
+            // do notebook
             int status;
             wait(&status);
-            if (WEXITSTATUS(status) == EXIT_FAILURE) {
+            if (WEXITSTATUS(status) != 0) {
                 printf("Erro a executar o programa: %s\n", args[0]);
                 removeTempExit(1);
             }
 
+            // Colocar '\n' (se ainda não tiver) antes de imprimir "<<<\n"
+            lseek(temp, -1, SEEK_CUR);
+            read(temp, buf, 1);
+            if (buf[0] != '\n')
+                write(temp, "\n", 1);
             write(temp, "<<<\n", 4);
 
             curCommand++;
         }
     }
 
+    // Se ocorrer um erro a ler do notebook, parar o processamento
     if (n == -1) {
         printf("Erro a ler do notebook\n");
         removeTempExit(1);
     }
 
+    // Copiar todo o conteúdo do ficheiro temporário para o notebook original
     criticalSection = 1;
 
     ftruncate(notebook, 0);
