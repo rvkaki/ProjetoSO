@@ -120,6 +120,17 @@ char **getArgs(char *buf) {
     return args;
 }
 
+// Função que liberta a memória associada aos argumentos
+void freeArgs(char **args) {
+    int i = 0;
+    while (args[i] != NULL) {
+        free(args[i]);
+        i++;
+    }
+    
+    free(args);
+}
+
 int main(int argc, char *argv[]) {
     signal(SIGINT, sigquitHandler);
 
@@ -195,6 +206,8 @@ int main(int argc, char *argv[]) {
                     num[i] = '\0';
                     mybuf += i;
                     inputOffset = atoi(num);
+
+                    free(num);
                 }
                 inputNum = curCommand - inputOffset;
             }
@@ -202,8 +215,13 @@ int main(int argc, char *argv[]) {
             // Criar um pipe para enviar ao comando a executar o output de
             // um programa anterior se ele quiser
             int p[2] = {0, 1};
-            if (inputNum != -1)
-                pipe(p);
+            if (inputNum != -1) {
+                int res = pipe(p);
+                if (res == -1) {
+                    printf("Não foi possível criar o pipe\n");
+                    removeTempExit(1);
+                }
+            }
 
             // Obter o array de argumentos para passar ao comando
             char **args = getArgs(mybuf);
@@ -231,10 +249,8 @@ int main(int argc, char *argv[]) {
                 close(p[0]);
                 lseek(temp, outputs[inputNum], SEEK_SET);
                 while (1) {
-                    char *pos;
-                    int n = read(temp, buf, bufSize);
-                    if ((pos = strstr(buf, "<<<")) != NULL) {
-                        write(p[1], buf, pos-buf);
+                    int n = readln(temp, &buf, &bufSize);
+                    if (n == 4 && strncmp(buf, "<<<\n", 4) == 0) {
                         break;
                     } else {
                         write(p[1], buf, n);
@@ -254,6 +270,8 @@ int main(int argc, char *argv[]) {
                 removeTempExit(1);
             }
 
+            freeArgs(args);
+
             // Colocar '\n' (se ainda não tiver) antes de imprimir "<<<\n"
             lseek(temp, -1, SEEK_CUR);
             read(temp, buf, 1);
@@ -264,6 +282,8 @@ int main(int argc, char *argv[]) {
             curCommand++;
         }
     }
+
+    free(outputs);
 
     // Se ocorrer um erro a ler do notebook, parar o processamento
     if (n == -1) {
@@ -281,6 +301,8 @@ int main(int argc, char *argv[]) {
         write(notebook, buf, n);
     
     close(notebook);
+
+    free(buf);
     
     removeTempExit(0);
 }
