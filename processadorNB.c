@@ -100,7 +100,7 @@ char **getArgs(char *buf) {
     int length = i, j = 0;
     for (i = 0; i < numArgs; i++) {
         int auxSize = 4, k = 0;
-        char *aux = malloc(auxSize);
+        char *aux = malloc(auxSize * sizeof(char));
         while (j < length && buf[j] != ' ') {
             aux[k++] = buf[j++];
             if (k == auxSize) {
@@ -155,7 +155,7 @@ int main(int argc, char *argv[]) {
 
     int n, bufSize = INITIAL_BUF_SIZE, curCommand = 0, numOutputs = INITIAL_NUM_COMANDS, *outputs = malloc(numOutputs * sizeof(int));
     char *buf = malloc(bufSize * sizeof(char));
-
+    
     while ((n = readln(notebook, &buf, &bufSize)) > 0) {
         // Se o texto a seguir for o output do comando de um processamento
         // anterior, ignorá-lo
@@ -226,22 +226,64 @@ int main(int argc, char *argv[]) {
             // Obter o array de argumentos para passar ao comando
             char **args = getArgs(mybuf);
 
+            // Verificar se o comando contém redirecionamento de input/output
+            // e alterar o input/output se tal se verificar
+            int i = 0, in = p[0], out = temp;
+            char *a = args[i];
+            while (a != NULL) {
+                if (strcmp(a, ">") == 0) {
+                    if (strcmp(args[i+1], TEMP_FILE) == 0) {
+                        printf("Erro a executar o programa: %s\nPor favor, escolha um ficheiro de output diferente de %s\n", args[0], TEMP_FILE);
+                        removeTempExit(1);
+                    }
+
+                    out = open(args[i+1], O_WRONLY | O_CREAT | O_TRUNC, 0600);
+                    if (out == -1) {
+                        printf("Erro a executar o programa: %s\nHouve um problema a redirecionar o output\n", args[0]);
+                        removeTempExit(1);
+                    }
+
+                    free(args[i]);
+                    args[i] = NULL;
+                    i++;
+                } else if (strcmp(a, "<") == 0) {
+                    in = open(args[i+1], O_RDONLY);
+                    if (in == -1 || inputNum != -1) {
+                        printf("Erro a executar o programa: %s\nHouve um problema a redirecionar o input\n", args[0]);
+                        removeTempExit(1);
+                    }
+
+                    free(args[i]);
+                    args[i] = NULL;
+                    i++;
+                }
+
+                i++;
+                a = args[i];
+            }
+
             // Criar um filho para executar o comando
             int x = fork();
             if (x == 0) {
-                dup2(p[0], 0);
-                dup2(temp, 1);
+                dup2(in, 0);
+                dup2(out, 1);
                 if (inputNum != -1) {
                     close(p[0]);
                     close(p[1]);
                 }
                 close(notebook);
                 close(temp);
+                if (out != temp)
+                    close(out);
 
                 execvp(args[0], args);
 
                 exit(1);
             }
+
+            // Fechar o ficheiro de output
+            if (out != temp)
+                close(out);
 
             // Se o comando a executar quiser como input o output de outro
             // comando, enviar-lhe o output
