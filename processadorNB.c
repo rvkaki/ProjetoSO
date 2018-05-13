@@ -275,15 +275,19 @@ int main(int argc, char *argv[]) {
                 close(temp);
                 if (out != temp)
                     close(out);
-
+                if (in != p[0])
+                    close(in);
+                
                 execvp(args[0], args);
 
                 exit(1);
             }
 
-            // Fechar o ficheiro de output
+            // Fechar os ficheiros de input/output
             if (out != temp)
                 close(out);
+            if (in != p[0])
+                close(in);
 
             // Se o comando a executar quiser como input o output de outro
             // comando, enviar-lhe o output
