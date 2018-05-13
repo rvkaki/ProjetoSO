@@ -87,18 +87,18 @@ int readln(int input, char **buf, int *nbytes) {
 // Função que tranforma uma string de argumentos separada por espaços num
 // array de argumentos
 // Devolve: array de apontadores para os argumentos
-char **getArgs(char *buf) {
-    int i = 0, numArgs = 1;
+char **getArgs(char *buf, int *numArgs) {
+    int i = 0, myNumArgs = 1;
     // Contar o número de argumentos
     while (buf[i] != '\n') {
         if (buf[i] == ' ')
-            numArgs++;
+            myNumArgs++;
         i++;
     }
 
-    char **args = malloc((numArgs+1) * sizeof(char *));
+    char **args = malloc((myNumArgs+1) * sizeof(char *));
     int length = i, j = 0;
-    for (i = 0; i < numArgs; i++) {
+    for (i = 0; i < myNumArgs; i++) {
         int auxSize = 4, k = 0;
         char *aux = malloc(auxSize * sizeof(char));
         while (j < length && buf[j] != ' ') {
@@ -115,18 +115,17 @@ char **getArgs(char *buf) {
         args[i] = aux;
     }
 
-    args[numArgs] = NULL;
+    args[myNumArgs] = NULL;
+
+    *numArgs = myNumArgs;
 
     return args;
 }
 
 // Função que liberta a memória associada aos argumentos
-void freeArgs(char **args) {
-    int i = 0;
-    while (args[i] != NULL) {
+void freeArgs(char **args, int numArgs) {
+    for (int i = 0; i < numArgs; i++)
         free(args[i]);
-        i++;
-    }
     
     free(args);
 }
@@ -155,7 +154,7 @@ int main(int argc, char *argv[]) {
 
     int n, bufSize = INITIAL_BUF_SIZE, curCommand = 0, numOutputs = INITIAL_NUM_COMANDS, *outputs = malloc(numOutputs * sizeof(int));
     char *buf = malloc(bufSize * sizeof(char));
-    
+
     while ((n = readln(notebook, &buf, &bufSize)) > 0) {
         // Se o texto a seguir for o output do comando de um processamento
         // anterior, ignorá-lo
@@ -224,7 +223,8 @@ int main(int argc, char *argv[]) {
             }
 
             // Obter o array de argumentos para passar ao comando
-            char **args = getArgs(mybuf);
+            int numArgs;
+            char **args = getArgs(mybuf, &numArgs);
 
             // Verificar se o comando contém redirecionamento de input/output
             // e alterar o input/output se tal se verificar
@@ -232,8 +232,8 @@ int main(int argc, char *argv[]) {
             char *a = args[i];
             while (a != NULL) {
                 if (strcmp(a, ">") == 0) {
-                    if (strcmp(args[i+1], TEMP_FILE) == 0) {
-                        printf("Erro a executar o programa: %s\nPor favor, escolha um ficheiro de output diferente de %s\n", args[0], TEMP_FILE);
+                    if (strcmp(args[i+1], TEMP_FILE) == 0 || strcmp(args[i+1], argv[1]) == 0) {
+                        printf("Erro a executar o programa: %s\nPor favor, escolha um ficheiro de output diferente\n", args[0]);
                         removeTempExit(1);
                     }
 
@@ -312,7 +312,7 @@ int main(int argc, char *argv[]) {
                 removeTempExit(1);
             }
 
-            freeArgs(args);
+            freeArgs(args, numArgs);
 
             // Colocar '\n' (se ainda não tiver) antes de imprimir "<<<\n"
             lseek(temp, -1, SEEK_CUR);
