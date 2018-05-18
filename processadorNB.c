@@ -262,25 +262,91 @@ int main(int argc, char *argv[]) {
                 a = args[i];
             }
 
-            // Criar um filho para executar o comando
-            int x = fork();
-            if (x == 0) {
-                dup2(in, 0);
-                dup2(out, 1);
-                if (inputNum != -1) {
-                    close(p[0]);
-                    close(p[1]);
-                }
-                close(notebook);
-                close(temp);
-                if (out != temp)
-                    close(out);
-                if (in != p[0])
-                    close(in);
-                
-                execvp(args[0], args);
+            // Verificar quantos pipes há
+            int numPipes = 0;
+            for (int i = 0; i < numArgs; i++) {
+                if (args[i] != NULL && strcmp(args[i], "|") == 0)
+                    numPipes++;
+            }
 
-                exit(1);
+            // Criar filhos conforme o número de comandos a executar (caso especial para quando só há um)
+            if (numPipes == 0) {
+                int x = fork();
+                if (x == 0) {
+                    dup2(in, 0);
+                    dup2(out, 1);
+                    if (inputNum != -1) {
+                        close(p[0]);
+                        close(p[1]);
+                    }
+                    close(notebook);
+                    close(temp);
+                    if (out != temp)
+                        close(out);
+                    if (in != p[0])
+                        close(in);
+
+                    execvp(args[0], args);
+
+                    exit(1);
+                }
+            } else {
+                int previousReadPipe = -1;
+                int i = 0, k = 0;
+                while (i < numArgs) {
+                    while (k < numArgs) {
+                        if (args[k] != NULL && strcmp(args[k], "|") == 0)
+                            break;
+                        k++;
+                    }
+
+                    int pAux[2], x;
+                    pipe(pAux);
+                    x = fork();
+                    if (x == 0) {
+                        if (i == 0) { // Primeiro comando
+                            dup2(in, 0);
+                            dup2(pAux[1], 1);
+                        } else if (k != numArgs) { // Comandos intermédios
+                            dup2(previousReadPipe, 0);
+                            dup2(pAux[1], 1);
+                            close(previousReadPipe);
+                        } else { // Último comando
+                            dup2(previousReadPipe, 0);
+                            dup2(out, 1);
+                            close(previousReadPipe);
+                        }
+
+                        args[k] = NULL;
+
+                        close(pAux[0]);
+                        close(pAux[1]);
+                        if (inputNum != -1) {
+                            close(p[0]);
+                            close(p[1]);
+                        }
+                        close(notebook);
+                        close(temp);
+                        if (out != temp)
+                            close(out);
+                        if (in != p[0])
+                            close(in);
+
+                        execvp(args[i], args+i);
+
+                        exit(1);
+                    }
+
+                    close(pAux[1]);
+                    if (previousReadPipe != -1)
+                        close(previousReadPipe);
+                    previousReadPipe = pAux[0];
+
+                    k++;
+                    i = k;
+                }
+
+                close(previousReadPipe);
             }
 
             // Fechar os ficheiros de input/output
@@ -306,14 +372,19 @@ int main(int argc, char *argv[]) {
                 lseek(temp, 0, SEEK_END);
             }
 
-            // Esperar que o comando a executar termine e verificar se o
-            // fez com sucesso. Se isso não acontecer, parar o processamento
+            // Esperar que os comandos a executar terminem e verificar se o
+            // fizeram com sucesso. Se isso não acontecer, parar o processamento
             // do notebook
-            int status;
-            wait(&status);
-            if (WEXITSTATUS(status) != 0) {
-                printf("Erro a executar o programa: %s\n", args[0]);
-                removeTempExit(1);
+            int status, progNum = 0;
+            while (wait(&status) != -1) {
+                if (WEXITSTATUS(status) != 0) {
+                    printf("Erro a executar o programa: %s\n", args[progNum]);
+                    removeTempExit(1);
+                }
+
+                while (args[progNum] != NULL)
+                    progNum++;
+                progNum++;
             }
 
             freeArgs(args, numArgs);
