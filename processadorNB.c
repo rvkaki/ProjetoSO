@@ -42,6 +42,9 @@ void sigquitHandler(int x) {
     removeTempExit(0);
 }
 
+// Handler que não faz nada
+void handler() {}
+
 // Função que determina se um ficheiro é do tipo .nb
 // Devolve: 1 se for
 //          0 caso contrário
@@ -130,8 +133,46 @@ void freeArgs(char **args, int numArgs) {
     free(args);
 }
 
+// Função que verifica se o comando contém redirecionamento de input/output e altera o input/output se tal se verificar
+void redirectInOut(char **args, int *in, int *out, char **argv) {
+    int i = 0;
+    char *a = args[i];
+    while (a != NULL) {
+        if (strcmp(a, ">") == 0) {
+            if (strcmp(args[i+1], TEMP_FILE) == 0 || strcmp(args[i+1], argv[1]) == 0) {
+                printf("Erro a executar o programa: %s\nPor favor, escolha um ficheiro de output diferente\n", args[0]);
+                removeTempExit(1);
+            }
+
+            *out = open(args[i+1], O_WRONLY | O_CREAT | O_TRUNC, 0600);
+            if (*out == -1) {
+                printf("Erro a executar o programa: %s\nHouve um problema a redirecionar o output\n", args[0]);
+                removeTempExit(1);
+            }
+
+            free(args[i]);
+            args[i] = NULL;
+            i++;
+        } else if (strcmp(a, "<") == 0) {
+            *in = open(args[i+1], O_RDONLY);
+            if (*in == -1) {
+                printf("Erro a executar o programa: %s\nHouve um problema a redirecionar o input\n", args[0]);
+                removeTempExit(1);
+            }
+
+            free(args[i]);
+            args[i] = NULL;
+            i++;
+        }
+
+        i++;
+        a = args[i];
+    }
+}
+
 int main(int argc, char *argv[]) {
     signal(SIGINT, sigquitHandler);
+    signal(SIGPIPE, handler);
 
     // Verificar se os argumentos estão corretos. Se não estiverem, imprimir
     // o modo de utilização e sair
@@ -211,68 +252,43 @@ int main(int argc, char *argv[]) {
                 inputNum = curCommand - inputOffset;
             }
 
-            // Criar um pipe para enviar ao comando a executar o output de
-            // um programa anterior se ele quiser
-            int p[2] = {0, 1};
-            if (inputNum != -1) {
-                int res = pipe(p);
-                if (res == -1) {
-                    printf("Não foi possível criar o pipe\n");
-                    removeTempExit(1);
-                }
-            }
-
             // Obter o array de argumentos para passar ao comando
             int numArgs;
             char **args = getArgs(mybuf, &numArgs);
 
-            // Verificar se o comando contém redirecionamento de input/output
-            // e alterar o input/output se tal se verificar
-            int i = 0, in = p[0], out = temp;
-            char *a = args[i];
-            while (a != NULL) {
-                if (strcmp(a, ">") == 0) {
-                    if (strcmp(args[i+1], TEMP_FILE) == 0 || strcmp(args[i+1], argv[1]) == 0) {
-                        printf("Erro a executar o programa: %s\nPor favor, escolha um ficheiro de output diferente\n", args[0]);
-                        removeTempExit(1);
-                    }
+            // Criar um pipe para enviar ao comando a executar o output de um programa anterior se ele quiser
+            int p[2] = {0, 1};
+            if (inputNum != -1) {
+                int aux = 0;
+                while (args[aux] != NULL && strcmp(args[aux], "|") != 0) {
+                    if (strcmp(args[aux], "<") == 0)
+                        break;
 
-                    out = open(args[i+1], O_WRONLY | O_CREAT | O_TRUNC, 0600);
-                    if (out == -1) {
-                        printf("Erro a executar o programa: %s\nHouve um problema a redirecionar o output\n", args[0]);
-                        removeTempExit(1);
-                    }
-
-                    free(args[i]);
-                    args[i] = NULL;
-                    i++;
-                } else if (strcmp(a, "<") == 0) {
-                    in = open(args[i+1], O_RDONLY);
-                    if (in == -1 || inputNum != -1) {
-                        printf("Erro a executar o programa: %s\nHouve um problema a redirecionar o input\n", args[0]);
-                        removeTempExit(1);
-                    }
-
-                    free(args[i]);
-                    args[i] = NULL;
-                    i++;
+                    aux++;
                 }
 
-                i++;
-                a = args[i];
-            }
-
-            // Verificar quantos pipes há
-            int numPipes = 0;
-            for (int i = 0; i < numArgs; i++) {
-                if (args[i] != NULL && strcmp(args[i], "|") == 0)
-                    numPipes++;
+                if (args[aux] == NULL || strcmp(args[aux], "<") != 0) {
+                    int res = pipe(p);
+                    if (res == -1) {
+                        printf("Não foi possível criar o pipe\n");
+                        removeTempExit(1);
+                    }
+                }
             }
 
             // Criar filhos conforme o número de comandos a executar (caso especial para quando só há um)
+            int numPipes = 0;
+            for (int i = 0; i < numArgs; i++) {
+                if (strcmp(args[i], "|") == 0)
+                    numPipes++;
+            }
+
             if (numPipes == 0) {
                 int x = fork();
                 if (x == 0) {
+                    int in = p[0], out = temp;
+                    redirectInOut(args, &in, &out, argv);
+
                     dup2(in, 0);
                     dup2(out, 1);
                     if (inputNum != -1) {
@@ -295,8 +311,10 @@ int main(int argc, char *argv[]) {
                 int i = 0, k = 0;
                 while (i < numArgs) {
                     while (k < numArgs) {
-                        if (args[k] != NULL && strcmp(args[k], "|") == 0)
+                        if (strcmp(args[k], "|") == 0) {
+                            args[k] = NULL;
                             break;
+                        }
                         k++;
                     }
 
@@ -304,21 +322,48 @@ int main(int argc, char *argv[]) {
                     pipe(pAux);
                     x = fork();
                     if (x == 0) {
+                        int in, out;
+
                         if (i == 0) { // Primeiro comando
+                            in = p[0];
+                            out = pAux[1];
+                            redirectInOut(args+i, &in, &out, argv);
+
                             dup2(in, 0);
-                            dup2(pAux[1], 1);
-                        } else if (k != numArgs) { // Comandos intermédios
-                            dup2(previousReadPipe, 0);
-                            dup2(pAux[1], 1);
-                            close(previousReadPipe);
-                        } else { // Último comando
-                            dup2(previousReadPipe, 0);
                             dup2(out, 1);
-                            close(previousReadPipe);
+
+                            if (in != p[0])
+                                close(in);
+                            if (out != pAux[1])
+                                close(out);
+                        } else if (k != numArgs) { // Comandos intermédios
+                            in = previousReadPipe;
+                            out = pAux[1];
+                            redirectInOut(args+i, &in, &out, argv);
+
+                            dup2(in, 0);
+                            dup2(out, 1);
+
+                            if (in != previousReadPipe)
+                                close(in);
+                            if (out != pAux[1])
+                                close(out);
+                        } else { // Último comando
+                            in = previousReadPipe;
+                            out = temp;
+                            redirectInOut(args+i, &in, &out, argv);
+
+                            dup2(in, 0);
+                            dup2(out, 1);
+
+                            if (in != previousReadPipe)
+                                close(in);
+                            if (out != temp)
+                                close(out);
                         }
 
-                        args[k] = NULL;
-
+                        if (previousReadPipe != -1)
+                            close(previousReadPipe);
                         close(pAux[0]);
                         close(pAux[1]);
                         if (inputNum != -1) {
@@ -327,10 +372,6 @@ int main(int argc, char *argv[]) {
                         }
                         close(notebook);
                         close(temp);
-                        if (out != temp)
-                            close(out);
-                        if (in != p[0])
-                            close(in);
 
                         execvp(args[i], args+i);
 
@@ -349,12 +390,6 @@ int main(int argc, char *argv[]) {
                 close(previousReadPipe);
             }
 
-            // Fechar os ficheiros de input/output
-            if (out != temp)
-                close(out);
-            if (in != p[0])
-                close(in);
-
             // Se o comando a executar quiser como input o output de outro
             // comando, enviar-lhe o output
             if (inputNum != -1) {
@@ -362,10 +397,12 @@ int main(int argc, char *argv[]) {
                 lseek(temp, outputs[inputNum], SEEK_SET);
                 while (1) {
                     int n = readln(temp, &buf, &bufSize);
-                    if (n == 4 && strncmp(buf, "<<<\n", 4) == 0) {
+                    if (n == 4 && strncmp(buf, "<<<\n", 4) == 0)
                         break;
-                    } else {
-                        write(p[1], buf, n);
+                    else {
+                        int res = write(p[1], buf, n);
+                        if (res == -1)
+                            break;
                     }
                 }
                 close(p[1]);
@@ -382,7 +419,7 @@ int main(int argc, char *argv[]) {
                     removeTempExit(1);
                 }
 
-                while (args[progNum] != NULL)
+                while (args[progNum] != NULL && strcmp(args[progNum], "|") != 0)
                     progNum++;
                 progNum++;
             }
