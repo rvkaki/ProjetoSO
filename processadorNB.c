@@ -13,12 +13,6 @@
 int temp = -1;
 int criticalSection = 0;
 
-// Função que imprime como utilizar o programa e faz exit
-void printUsageExit(char *name) {
-    printf("Uso: %s exemplo.nb\n", name);
-    exit(1);
-}
-
 // Função que remove o ficheiro temporário e faz exit
 void removeTempExit(int exitStatus) {
     if (temp != -1) {
@@ -30,13 +24,16 @@ void removeTempExit(int exitStatus) {
             exit(1);
         }
     }
+
     exit(exitStatus);
 }
 
 // Handler para lidar com o Ctrl+C
 void sigquitHandler(int x) {
-    if (criticalSection)
+    if (criticalSection) {
+        printf("\nSinal %d (Ctrl+C) recebido, mas vai ser ignorado\n", x);
         return;
+    }
 
     printf("\nSinal %d (Ctrl+C) recebido. A parar a execução\n", x);
     removeTempExit(0);
@@ -45,19 +42,7 @@ void sigquitHandler(int x) {
 // Handler que não faz nada
 void handler() {}
 
-// Função que determina se um ficheiro é do tipo .nb
-// Devolve: 1 se for
-//          0 caso contrário
-int isNBFile(char *fileName) {
-    int length = strlen(fileName);
-    if (length < 4)
-        return 0;
-    
-    return strcmp(fileName + length - 3, ".nb") == 0 ? 1 : 0;
-}
-
-// Função que lê uma linha (ou até nbytes carateres) do input e coloca em buf
-// e, se necessário, aumenta a capacidade de buf
+// Função que lê uma linha (ou até nbytes carateres) do input e coloca em buf e, se necessário, aumenta a capacidade de buf
 // Devolve: -1 se falhar
 //          número de carateres lidos caso contrário
 int readln(int input, char **buf, int *nbytes) {
@@ -87,11 +72,11 @@ int readln(int input, char **buf, int *nbytes) {
 	return count;
 }
 
-// Função que tranforma uma string de argumentos separada por espaços num
-// array de argumentos
+// Função que tranforma uma string de argumentos separada por espaços num array de argumentos
 // Devolve: array de apontadores para os argumentos
 char **getArgs(char *buf, int *numArgs) {
     int i = 0, myNumArgs = 1;
+
     // Contar o número de argumentos
     while (buf[i] != '\n') {
         if (buf[i] == ' ')
@@ -102,7 +87,7 @@ char **getArgs(char *buf, int *numArgs) {
     char **args = malloc((myNumArgs+1) * sizeof(char *));
     int length = i, j = 0;
     for (i = 0; i < myNumArgs; i++) {
-        int auxSize = 4, k = 0;
+        int auxSize = 8, k = 0;
         char *aux = malloc(auxSize * sizeof(char));
         while (j < length && buf[j] != ' ') {
             aux[k++] = buf[j++];
@@ -137,6 +122,7 @@ void freeArgs(char **args, int numArgs) {
 void redirectInOut(char **args, int *in, int *out, char **argv) {
     int i = 0;
     char *a = args[i];
+
     while (a != NULL) {
         if (strcmp(a, ">") == 0) {
             if (strcmp(args[i+1], TEMP_FILE) == 0 || strcmp(args[i+1], argv[1]) == 0) {
@@ -174,10 +160,12 @@ int main(int argc, char *argv[]) {
     signal(SIGINT, sigquitHandler);
     signal(SIGPIPE, handler);
 
-    // Verificar se os argumentos estão corretos. Se não estiverem, imprimir
+    // Verificar se existe ficheiro para processar. Se não houver, imprimir
     // o modo de utilização e sair
-    if (argc != 2 || !isNBFile(argv[1]))
-        printUsageExit(argv[0]);
+    if (argc != 2) {
+        printf("Uso: %s exemplo.nb\n", argv[0]);
+        exit(1);
+    }
 
     // Abrir o notebook
     int notebook = open(argv[1], O_RDWR);
@@ -197,8 +185,7 @@ int main(int argc, char *argv[]) {
     char *buf = malloc(bufSize * sizeof(char));
 
     while ((n = readln(notebook, &buf, &bufSize)) > 0) {
-        // Se o texto a seguir for o output do comando de um processamento
-        // anterior, ignorá-lo
+        // Se o texto a seguir for o output do comando de um processamento anterior, ignorá-lo
         if (n == 4 && strncmp(buf, ">>>\n", 4) == 0) {
             while (1) {
                 readln(notebook, &buf, &bufSize);
@@ -209,24 +196,22 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
-        // Imprimir a linha para o ficheiro temporário, quer seja uma linha de
-        // texto ou um comando
+        // Escrever a linha no ficheiro temporário (quer seja uma linha de texto ou uma linha de comando)
         write(temp, buf, n);
 
         // Se a linha for um comando, interpretá-lo e executá-lo
         if (buf[0] == '$') {
             write(temp, ">>>\n", 4);
 
-            // Guardar a posição do ficheiro temporário onde começa o output
-            // do programa a executar
+            // Guardar a posição do ficheiro temporário onde começa o output do programa a executar
             outputs[curCommand] = lseek(temp, 0, SEEK_CUR);
             if (curCommand == numOutputs-1) {
                 outputs = realloc(outputs, 2 * numOutputs * sizeof(int));
                 numOutputs *= 2;
             }
 
-            // Verificar se o comando a executar necessita de receber como input
-            // o output de um programa anterior e se sim coloca qual em inputNum
+            // Verificar se o comando a executar necessita de receber como input o output de um programa
+            // anterior e se sim coloca qual em inputNum
             char *mybuf = buf+2;
             int inputNum = -1;
             if (buf[1] != ' ') {
@@ -261,13 +246,15 @@ int main(int argc, char *argv[]) {
             if (inputNum != -1) {
                 int aux = 0;
                 while (args[aux] != NULL && strcmp(args[aux], "|") != 0) {
-                    if (strcmp(args[aux], "<") == 0)
+                    if (strcmp(args[aux], "<") == 0) {
+                        inputNum = -1;
                         break;
+                    }
 
                     aux++;
                 }
 
-                if (args[aux] == NULL || strcmp(args[aux], "<") != 0) {
+                if (inputNum != -1) {
                     int res = pipe(p);
                     if (res == -1) {
                         printf("Não foi possível criar o pipe\n");
@@ -286,6 +273,11 @@ int main(int argc, char *argv[]) {
             if (numPipes == 0) {
                 int x = fork();
                 if (x == 0) {
+                    close(temp);
+                    temp = open(TEMP_FILE, O_WRONLY | O_APPEND);
+                    if (temp == -1)
+                        exit(1);
+
                     int in = p[0], out = temp;
                     redirectInOut(args, &in, &out, argv);
 
@@ -349,6 +341,11 @@ int main(int argc, char *argv[]) {
                             if (out != pAux[1])
                                 close(out);
                         } else { // Último comando
+                            close(temp);
+                            temp = open(TEMP_FILE, O_WRONLY | O_APPEND, 0600);
+                            if (temp == -1)
+                                exit(1);
+
                             in = previousReadPipe;
                             out = temp;
                             redirectInOut(args+i, &in, &out, argv);
@@ -406,7 +403,6 @@ int main(int argc, char *argv[]) {
                     }
                 }
                 close(p[1]);
-                lseek(temp, 0, SEEK_END);
             }
 
             // Esperar que os comandos a executar terminem e verificar se o
@@ -424,6 +420,8 @@ int main(int argc, char *argv[]) {
                 progNum++;
             }
 
+            lseek(temp, 0, SEEK_END);
+
             freeArgs(args, numArgs);
 
             // Colocar '\n' (se ainda não tiver) antes de imprimir "<<<\n"
@@ -438,6 +436,7 @@ int main(int argc, char *argv[]) {
     }
 
     free(outputs);
+    free(buf);
 
     // Se ocorrer um erro a ler do notebook, parar o processamento
     if (n == -1) {
@@ -446,17 +445,16 @@ int main(int argc, char *argv[]) {
     }
 
     // Copiar todo o conteúdo do ficheiro temporário para o notebook original
+    close(notebook);
+    close(temp);
+
     criticalSection = 1;
 
-    ftruncate(notebook, 0);
-    lseek(notebook, 0, SEEK_SET);
-    lseek(temp, 0, SEEK_SET);
-    while ((n = readln(temp, &buf, &bufSize)) > 0)
-        write(notebook, buf, n);
-    
-    close(notebook);
+    int res = rename(TEMP_FILE, argv[1]);
+    if (res == -1) {
+        printf("Não foi possível alterar o nome do ficheiro temporário para %s\n", argv[1]);
+        removeTempExit(1);
+    }
 
-    free(buf);
-    
-    removeTempExit(0);
+    exit(0);
 }
