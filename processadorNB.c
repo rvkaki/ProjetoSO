@@ -72,16 +72,21 @@ int readln(int input, char **buf, int *nbytes) {
 	return count;
 }
 
-// Função que tranforma uma string de argumentos separada por espaços num array de argumentos
+// Função que transforma uma string de argumentos separada por espaços num array de argumentos
 // Devolve: array de apontadores para os argumentos
 char **getArgs(char *buf, int *numArgs) {
     int i = 0, myNumArgs = 1;
 
     // Contar o número de argumentos
     while (buf[i] != '\n') {
-        if (buf[i] == ' ')
+        if (buf[i] == ' ') {
+            do {
+                i++;
+            } while (buf[i] == ' ');
+
             myNumArgs++;
-        i++;
+        } else
+            i++;
     }
 
     char **args = malloc((myNumArgs+1) * sizeof(char *));
@@ -98,7 +103,9 @@ char **getArgs(char *buf, int *numArgs) {
         }
         aux[k] = '\0';
 
-        j++;
+        // Saltar os espaços entre argumentos
+        while (j < length && buf[j] == ' ')
+            j++;
 
         args[i] = aux;
     }
@@ -114,7 +121,7 @@ char **getArgs(char *buf, int *numArgs) {
 void freeArgs(char **args, int numArgs) {
     for (int i = 0; i < numArgs; i++)
         free(args[i]);
-    
+
     free(args);
 }
 
@@ -203,6 +210,10 @@ int main(int argc, char *argv[]) {
         if (buf[0] == '$') {
             write(temp, ">>>\n", 4);
 
+            // Guardar a linha atual numa string para usar quando necessário
+            char *line = malloc(sizeof(char) * n);
+            strncpy(line, buf, n-1);
+
             // Guardar a posição do ficheiro temporário onde começa o output do programa a executar
             outputs[curCommand] = lseek(temp, 0, SEEK_CUR);
             if (curCommand == numOutputs-1) {
@@ -213,9 +224,10 @@ int main(int argc, char *argv[]) {
             // Verificar se o comando a executar necessita de receber como input o output de um programa
             // anterior e se sim coloca qual em inputNum
             char *mybuf = buf+2;
-            int inputNum = -1;
+            int inputNum = -1, inputChanged = 0;
             if (buf[1] != ' ') {
                 mybuf += 1;
+                inputChanged = 1;
                 int inputOffset = 1;
                 if (buf[1] != '|') {
                     int i = 0, sizeNum = 2;
@@ -237,9 +249,19 @@ int main(int argc, char *argv[]) {
                 inputNum = curCommand - inputOffset;
             }
 
+            // Ignorar os espaços depois de '$n|'
+            while (mybuf[0] == ' ')
+                mybuf++;
+
             // Obter o array de argumentos para passar ao comando
             int numArgs;
             char **args = getArgs(mybuf, &numArgs);
+
+            // Verificar se o número de input é válido. Se não for, avisar o utilizador e parar o processamento
+            if (inputChanged && (inputNum < 0 || inputNum >= curCommand)) {
+                printf("Número de input inválido na linha: %s\n", line);
+                removeTempExit(1);
+            }
 
             // Criar um pipe para enviar ao comando a executar o output de um programa anterior se ele quiser
             int p[2] = {0, 1};
@@ -247,19 +269,16 @@ int main(int argc, char *argv[]) {
                 int aux = 0;
                 while (args[aux] != NULL && strcmp(args[aux], "|") != 0) {
                     if (strcmp(args[aux], "<") == 0) {
-                        inputNum = -1;
-                        break;
+                        printf("Input anterior e redirecionamento do input simultâneos na linha:\n%s\n", line);
+                        removeTempExit(1);
                     }
-
                     aux++;
                 }
 
-                if (inputNum != -1) {
-                    int res = pipe(p);
-                    if (res == -1) {
-                        printf("Não foi possível criar o pipe\n");
-                        removeTempExit(1);
-                    }
+                int res = pipe(p);
+                if (res == -1) {
+                    printf("Não foi possível criar o pipe\n");
+                    removeTempExit(1);
                 }
             }
 
@@ -407,25 +426,20 @@ int main(int argc, char *argv[]) {
 
             // Esperar que os comandos a executar terminem e verificar se o
             // fizeram com sucesso. Se isso não acontecer, parar o processamento
-            // do notebook
-            int status, progNum = 0;
+            // do notebook e avisar o utilizador
+            int status;
             while (wait(&status) != -1) {
                 if (WEXITSTATUS(status) != 0) {
-                    printf("Erro a executar o programa: %s\n", args[progNum]);
+                    printf("Erro a executar a linha: %s\n", line);
                     removeTempExit(1);
                 }
-
-                while (args[progNum] != NULL && strcmp(args[progNum], "|") != 0)
-                    progNum++;
-                progNum++;
             }
 
-            lseek(temp, 0, SEEK_END);
-
             freeArgs(args, numArgs);
+            free(line);
 
             // Colocar '\n' (se ainda não tiver) antes de imprimir "<<<\n"
-            lseek(temp, -1, SEEK_CUR);
+            lseek(temp, -1, SEEK_END);
             read(temp, buf, 1);
             if (buf[0] != '\n')
                 write(temp, "\n", 1);
@@ -444,7 +458,7 @@ int main(int argc, char *argv[]) {
         removeTempExit(1);
     }
 
-    // Copiar todo o conteúdo do ficheiro temporário para o notebook original
+    // Alterar o nome do ficheiro temporário para o nome do notebook
     close(notebook);
     close(temp);
 
