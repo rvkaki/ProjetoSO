@@ -4,3 +4,12 @@ Agora podemos ordenar estes ficheiros:
 $| sort
 E escolher o primeiro:
 $| head -1
+
+Enviamos o output do primeiro comando para o ficheiro lixo.txt:
+$3| cat > lixo.txt 
+E ordenamos o output e contamos o número de linhas:
+$ sort --reverse < lixo.txt | wc -l
+Conta o numero de ficheiros nesta pasta depois da criação do lixo.txt:
+$ ls | wc -l
+Escreve no notebook o que for introduzido na bash pelo utilizador:
+$ cat

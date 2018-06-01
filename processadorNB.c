@@ -249,6 +249,12 @@ int main(int argc, char *argv[]) {
                 inputNum = curCommand - inputOffset;
             }
 
+            // Verificar se o número de input é válido. Se não for, avisar o utilizador e parar o processamento
+            if (inputChanged && (inputNum < 0 || inputNum >= curCommand)) {
+                printf("Número de input inválido na linha: %s\n", line);
+                removeTempExit(1);
+            }
+
             // Ignorar os espaços depois de '$n|'
             while (mybuf[0] == ' ')
                 mybuf++;
@@ -256,12 +262,6 @@ int main(int argc, char *argv[]) {
             // Obter o array de argumentos para passar ao comando
             int numArgs;
             char **args = getArgs(mybuf, &numArgs);
-
-            // Verificar se o número de input é válido. Se não for, avisar o utilizador e parar o processamento
-            if (inputChanged && (inputNum < 0 || inputNum >= curCommand)) {
-                printf("Número de input inválido na linha: %s\n", line);
-                removeTempExit(1);
-            }
 
             // Criar um pipe para enviar ao comando a executar o output de um programa anterior se ele quiser
             int p[2] = {0, 1};
@@ -291,6 +291,10 @@ int main(int argc, char *argv[]) {
 
             if (numPipes == 0) {
                 int x = fork();
+                if (x == -1) {
+                    printf("Erro a criar o filho\n");
+                    removeTempExit(1);
+                }
                 if (x == 0) {
                     close(temp);
                     temp = open(TEMP_FILE, O_WRONLY | O_APPEND);
@@ -332,6 +336,10 @@ int main(int argc, char *argv[]) {
                     int pAux[2], x;
                     pipe(pAux);
                     x = fork();
+                    if (x == -1) {
+                        printf("Erro a criar o filho\n");
+                        removeTempExit(1);
+                    }
                     if (x == 0) {
                         int in, out;
 
